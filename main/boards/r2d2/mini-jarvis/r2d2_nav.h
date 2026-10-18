@@ -116,6 +116,8 @@ private:
     lv_obj_t* player_prev_ = nullptr;
     lv_obj_t* player_next_ = nullptr;
     lv_obj_t* player_volume_ = nullptr;
+    lv_obj_t* player_vol_down_ = nullptr;
+    lv_obj_t* player_vol_up_ = nullptr;
     int64_t player_loaded_us_ = 0;   // when elapsed was true (interpolated from here)
     int64_t next_progress_us_ = 0;
     std::unique_ptr<LvglAllocatedImage> image_data_;
