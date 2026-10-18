@@ -119,9 +119,7 @@ private:
     lv_obj_t* player_toggle_icon_ = nullptr;
     lv_obj_t* player_prev_ = nullptr;
     lv_obj_t* player_next_ = nullptr;
-    lv_obj_t* player_volume_ = nullptr;
-    lv_obj_t* player_vol_down_ = nullptr;
-    lv_obj_t* player_vol_up_ = nullptr;
+
     // queue (below the player): next tracks + two big volume buttons
     lv_obj_t* queue_ = nullptr;
     std::vector<lv_obj_t*> queue_tracks_;

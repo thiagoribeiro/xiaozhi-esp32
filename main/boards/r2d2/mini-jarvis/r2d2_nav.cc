@@ -39,9 +39,8 @@ constexpr int64_t kLiveRefreshUs = 5 * 1000 * 1000;
 constexpr int64_t kLoadTimeoutUs = 8 * 1000 * 1000;
 constexpr int64_t kPlayerRefreshUs = 3 * 1000 * 1000;   // the queue may move on its own
 constexpr int64_t kPlayerProgressUs = 1000 * 1000;      // arc and clock, interpolated locally
-// player tap zones (screen pixels): the controls row, then the two volume
-// buttons below it (left = down, right = up; the centre stays play/pause)
-constexpr int kControlsTop = 146, kControlsBottom = 194, kVolumeTop = 188, kVolumeCentreHalfW = 26;
+// player tap zones (screen pixels): the controls row; above it, play/pause
+constexpr int kControlsTop = 146, kControlsBottom = 194;
 
 std::string MinSec(float seconds) {
     int s = std::max(0, (int)seconds);
@@ -241,22 +240,7 @@ NavView::NavView(lv_obj_t* parent, CoreClient* client) : client_(client) {
     lv_obj_align(player_toggle_, LV_ALIGN_CENTER, 0, 50);
     player_toggle_icon_ = Label(player_toggle_, &font_material_symbols_20_4, kBg);
     lv_obj_center(player_toggle_icon_);
-    for (int side = -1; side <= 1; side += 2) {  // big round volume buttons (finger-sized)
-        lv_obj_t* button = Plain(player_);
-        lv_obj_set_size(button, 44, 44);
-        lv_obj_set_style_radius(button, 22, 0);
-        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(button, Rgb(kRowBg), 0);
-        lv_obj_set_style_border_color(button, Rgb(kHairline), 0);
-        lv_obj_set_style_border_width(button, 1, 0);
-        lv_obj_align(button, LV_ALIGN_CENTER, side * 50, 86);
-        lv_obj_t* icon = Label(button, &font_material_symbols_20_4, kText);
-        lv_label_set_text(icon, side < 0 ? MATERIAL_SYMBOLS_VOLUME_DOWN : MATERIAL_SYMBOLS_VOLUME_UP);
-        lv_obj_center(icon);
-        (side < 0 ? player_vol_down_ : player_vol_up_) = button;
-    }
-    player_volume_ = Label(player_, &font_noto_sans_basic_16_4, kTextDim);
-    lv_obj_align(player_volume_, LV_ALIGN_CENTER, 0, 86);
+    // volume lives in the queue screen (swipe up), not here
 
     // ── queue: the next three tracks, then two BIG volume buttons (- / +) ──
     queue_ = Plain(root_);
@@ -558,8 +542,8 @@ void NavView::Tap(int x, int y) {
 
 void NavView::TapPlayer(int x, int y) {
     const char* key;
-    if (y >= kVolumeTop && std::abs(x - 120) > kVolumeCentreHalfW) {
-        key = x < 120 ? "vol_down" : "vol_up";
+    if (y > kControlsBottom) {
+        return;  // below the controls: the "Fila" hint, nothing to press by accident
     } else if (y >= kControlsTop && y <= kControlsBottom && x < 92) {
         key = "previous";
     } else if (y >= kControlsTop && y <= kControlsBottom && x > 148) {
@@ -729,11 +713,7 @@ void NavView::Render() {
 
     std::string footer = page_ + 1 < Pages() ? "mais" : screen_.next_name;
     lv_label_set_text(footer_, footer.c_str());
-    // The player's volume buttons sit where the footer arrow goes: there the
-    // hint drops to the very bottom edge, without the arrow.
-    bool player = kind == "player";
-    lv_obj_align(footer_, LV_ALIGN_BOTTOM_MID, 0, player ? -4 : -22);
-    Show(footer_arrow_, !footer.empty() && !player);
+    Show(footer_arrow_, !footer.empty());
 }
 
 void NavView::RenderList() {
@@ -772,10 +752,6 @@ void NavView::RenderPlayer() {
     Show(player_next_, !stopped);
     Show(player_arc_, !stopped);
     lv_obj_set_style_arc_color(player_arc_, Rgb(screen_.state == "play" ? kAccent : kTextFaint), LV_PART_INDICATOR);
-    char text[16];
-    int volume = screen_.volume >= 0 ? screen_.volume : Board::GetInstance().GetAudioCodec()->output_volume();
-    snprintf(text, sizeof(text), "%d%%", volume);
-    lv_label_set_text(player_volume_, text);
     RenderPlayerProgress(esp_timer_get_time());
 }
 
