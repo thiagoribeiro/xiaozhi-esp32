@@ -245,6 +245,10 @@ bool CoreClient::PollStatus() {
         if (cJSON_IsNumber(start) && cJSON_IsNumber(end) && cJSON_IsNumber(level)) {
             display_->SetNight(start->valueint, end->valueint, level->valueint);
         }
+        cJSON* fraction = cJSON_GetObjectItem(night, "fraction");  // sun mode (Core: satellite/sun.py)
+        cJSON* floor = cJSON_GetObjectItem(night, "floor");
+        display_->SetNightCurve(cJSON_IsNumber(fraction) ? (float)fraction->valuedouble : -1.0f,
+                                cJSON_IsNumber(floor) ? floor->valueint : 5);
     }
     cJSON_Delete(root);
     display_->SetWeather(weather);

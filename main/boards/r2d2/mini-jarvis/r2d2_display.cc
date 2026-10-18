@@ -5,6 +5,7 @@
 #include "board.h"
 #include "device_state.h"
 #include "r2d2_core_client.h"
+#include "settings.h"
 
 #include <cJSON.h>
 #include <esp_log.h>
@@ -235,6 +236,13 @@ void R2d2Display::SetNight(int start_hour, int end_hour, int brightness) {
     next_night_check_us_ = 0;
 }
 
+void R2d2Display::SetNightCurve(float fraction, int floor) {
+    DisplayLockGuard lock(this);
+    night_fraction_ = fraction < 0 ? -1 : std::clamp(fraction, 0.0f, 1.0f);
+    night_floor_ = std::clamp(floor, 1, 100);
+    next_night_check_us_ = 0;
+}
+
 void R2d2Display::UpdateNight(int64_t now_us) {
     if (now_us < next_night_check_us_) return;
     next_night_check_us_ = now_us + kNightCheckUs;
@@ -242,6 +250,19 @@ void R2d2Display::UpdateNight(int64_t now_us) {
     if (!backlight) return;
     bool idle = UiIdle(Application::GetInstance().GetDeviceState());
     if (!idle) last_activity_us_ = now_us;  // a conversation counts as activity until it ends
+    if (night_fraction_ >= 0) {  // sun mode: follow the Core's dusk/dawn curve
+        int day = Settings("display").GetInt("brightness", 75);
+        int target = (int)std::lround(day - (day - std::min(night_floor_, day)) * night_fraction_);
+        bool dim = target < day && idle && now_us - last_activity_us_ > kNightAfterActivityUs;
+        if (dim && backlight->brightness() != target) {
+            backlight->SetBrightness(target);  // not permanent: the saved level stays the day one
+            night_dimmed_ = true;
+        } else if (!dim && night_dimmed_) {
+            backlight->RestoreBrightness();
+            night_dimmed_ = false;
+        }
+        return;
+    }
 
     time_t now = time(nullptr);
     struct tm tm_now;

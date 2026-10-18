@@ -69,6 +69,9 @@ public:
     void OnGesture(Gesture gesture, int x, int y);
     // Night dimming while idle (window and level from the Core's status poll).
     void SetNight(int start_hour, int end_hour, int brightness);
+    // Sun mode: how far into the night (0 day … 1 night, ramped over hours after
+    // sunset/sunrise by the Core) and the floor brightness; < 0 = window mode.
+    void SetNightCurve(float fraction, int floor);
     void NoteActivity() { last_activity_us_ = esp_timer_get_time(); }  // any task: a touch began
 
 private:
@@ -102,6 +105,8 @@ private:
     lv_obj_t* chart_state_ = nullptr;
     int64_t chart_until_us_ = 0;
     int night_start_ = 20, night_end_ = 7, night_level_ = 10;
+    float night_fraction_ = -1;   // sun mode when >= 0
+    int night_floor_ = 5;
     bool night_dimmed_ = false;
     std::atomic<int64_t> last_activity_us_{0};
     int64_t next_night_check_us_ = 0;
