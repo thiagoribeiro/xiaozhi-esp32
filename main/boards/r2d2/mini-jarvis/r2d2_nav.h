@@ -83,6 +83,9 @@ private:
     void RenderPlayer();
     void RenderPlayerProgress(int64_t now_us);
     void TapPlayer(int x, int y);
+    void RenderQueue();
+    void TapQueue(int x, int y);
+    bool IsQueue() const { return screen_.id == "media_queue"; }
     void Tap(int x, int y);
     void RunLocal(Item& item);
     int Pages() const;
@@ -119,6 +122,10 @@ private:
     lv_obj_t* player_volume_ = nullptr;
     lv_obj_t* player_vol_down_ = nullptr;
     lv_obj_t* player_vol_up_ = nullptr;
+    // queue (below the player): next tracks + two big volume buttons
+    lv_obj_t* queue_ = nullptr;
+    std::vector<lv_obj_t*> queue_tracks_;
+    lv_obj_t* queue_volume_ = nullptr;
     int64_t player_loaded_us_ = 0;   // when elapsed was true (interpolated from here)
     int64_t next_progress_us_ = 0;
     std::unique_ptr<LvglAllocatedImage> image_data_;

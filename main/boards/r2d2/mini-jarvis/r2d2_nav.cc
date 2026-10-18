@@ -258,6 +258,33 @@ NavView::NavView(lv_obj_t* parent, CoreClient* client) : client_(client) {
     player_volume_ = Label(player_, &font_noto_sans_basic_16_4, kTextDim);
     lv_obj_align(player_volume_, LV_ALIGN_CENTER, 0, 86);
 
+    // ── queue: the next three tracks, then two BIG volume buttons (- / +) ──
+    queue_ = Plain(root_);
+    lv_obj_set_size(queue_, LV_PCT(100), LV_PCT(100));
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t* label = Label(queue_, &font_noto_sans_basic_16_4, i == 0 ? kText : kTextDim);
+        lv_obj_set_size(label, 176, 20);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+        lv_obj_align(label, LV_ALIGN_CENTER, 0, -56 + i * 24);
+        queue_tracks_.push_back(label);
+    }
+    queue_volume_ = Label(queue_, &font_noto_sans_basic_16_4, kTextDim);
+    lv_obj_align(queue_volume_, LV_ALIGN_CENTER, 0, 22);
+    for (int side = -1; side <= 1; side += 2) {
+        lv_obj_t* button = Plain(queue_);
+        lv_obj_set_size(button, 84, 56);
+        lv_obj_set_style_radius(button, 18, 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(button, Rgb(kRowBg), 0);
+        lv_obj_set_style_border_color(button, Rgb(kAccent), 0);
+        lv_obj_set_style_border_width(button, 2, 0);
+        lv_obj_align(button, LV_ALIGN_CENTER, side * 48, 64);
+        lv_obj_t* icon = Label(button, &font_material_symbols_20_4, kText);
+        lv_label_set_text(icon, side < 0 ? MATERIAL_SYMBOLS_VOLUME_DOWN : MATERIAL_SYMBOLS_VOLUME_UP);
+        lv_obj_center(icon);
+    }
+
     footer_arrow_ = Label(root_, &font_material_symbols_16_4, kTextFaint);
     lv_label_set_text(footer_arrow_, MATERIAL_SYMBOLS_KEYBOARD_ARROW_UP);
     lv_obj_align(footer_arrow_, LV_ALIGN_BOTTOM_MID, 0, -40);
@@ -446,7 +473,7 @@ void NavView::Load(const std::string& id, bool quiet, const std::string& title) 
 }
 
 int NavView::Pages() const {
-    if (screen_.kind != "list") return 1;
+    if (screen_.kind != "list" || IsQueue()) return 1;
     return std::max<int>(1, (screen_.items.size() + kRows - 1) / kRows);
 }
 
@@ -496,6 +523,10 @@ void NavView::Tap(int x, int y) {
     }
     if (screen_.kind == "player") {
         TapPlayer(x, y);
+        return;
+    }
+    if (IsQueue()) {
+        TapQueue(x, y);
         return;
     }
     if (screen_.kind != "list") return;
@@ -554,6 +585,28 @@ void NavView::TapPlayer(int x, int y) {
     }
     client_->Action(act->second, seq_);
     Render();
+}
+
+void NavView::TapQueue(int x, int y) {
+    if (y < 120) return;  // the track list: nothing to tap
+    for (auto& item : screen_.items) {  // the bottom half is all volume: left = -, right = +
+        if (item.local == (x < 120 ? "volume-" : "volume+")) {
+            RunLocal(item);
+            return;
+        }
+    }
+}
+
+void NavView::RenderQueue() {
+    size_t shown = 0;
+    for (const auto& item : screen_.items) {
+        if (!item.local.empty() || shown >= queue_tracks_.size()) continue;
+        lv_label_set_text(queue_tracks_[shown++], item.label.c_str());
+    }
+    for (; shown < queue_tracks_.size(); shown++) lv_label_set_text(queue_tracks_[shown], "");
+    char text[24];
+    snprintf(text, sizeof(text), "volume %d%%", Board::GetInstance().GetAudioCodec()->output_volume());
+    lv_label_set_text(queue_volume_, text);
 }
 
 void NavView::RunLocal(Item& item) {
@@ -649,6 +702,7 @@ void NavView::Render() {
     Show(image_, kind == "photo");
     Show(caption_, kind == "photo");
     Show(player_, !screen_.loading && kind == "player");
+    Show(queue_, !screen_.loading && IsQueue());
     for (auto row : rows_) Show(row, false);
 
     std::string title = screen_.title;
@@ -665,7 +719,8 @@ void NavView::Render() {
         return;
     }
     if (kind == "note") lv_label_set_text(note_, screen_.text.c_str());
-    if (kind == "list") RenderList();
+    if (kind == "list" && !IsQueue()) RenderList();
+    if (IsQueue()) RenderQueue();
     if (kind == "metrics") RenderMetrics();
     if (kind == "device") RenderDevice();
     if (kind == "chart") RenderChart();
