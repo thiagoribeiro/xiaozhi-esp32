@@ -327,6 +327,12 @@ void R2d2Display::SetChatMessage(const char* role, const char* content) {
             Refresh();
         } else if (cJSON_IsString(kind) && strcmp(kind->valuestring, "media") == 0) {
             ApplyMedia(payload);  // sent as a voice session closes: resume / start own music
+            cJSON* action = cJSON_GetObjectItem(payload, "action");
+            if (cJSON_IsString(action) && strcmp(action->valuestring, "play") == 0) {
+                DisplayLockGuard lock(this);
+                if (nav_) nav_->ShowArea("media");  // "toca X" → the player, not the clock
+                Refresh();
+            }
         } else {
             ESP_LOGW(TAG, "unknown Core message: %.120s", content);
         }

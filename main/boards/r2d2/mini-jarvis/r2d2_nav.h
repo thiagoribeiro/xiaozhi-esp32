@@ -43,6 +43,7 @@ public:
     void OnGesture(Gesture gesture, int x, int y);
     void Tick(int64_t now_us);   // auto-home, live refreshes
     bool AtHome() const;         // home area, top level: the display shows its clock
+    void ShowArea(const std::string& screen);  // jump to an area by its screen id ("media")
     bool ready() const { return !areas_.empty(); }
     lv_obj_t* obj() const { return root_; }
 

@@ -213,13 +213,15 @@ NavView::NavView(lv_obj_t* parent, CoreClient* client) : client_(client) {
     lv_obj_set_style_arc_width(player_arc_, 4, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(player_arc_, Rgb(kHairline), LV_PART_MAIN);
     lv_obj_set_style_arc_color(player_arc_, Rgb(kAccent), LV_PART_INDICATOR);
+    // One line each (a long title wrapped over the artist, 2026-10-18): the
+    // title scrolls when it doesn't fit, the artist ends in dots.
     player_track_ = Label(player_, &font_noto_sans_basic_20_4, kText);
     lv_obj_set_width(player_track_, 170);
     lv_obj_set_style_text_align(player_track_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(player_track_, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(player_track_, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_align(player_track_, LV_ALIGN_CENTER, 0, -38);
     player_artist_ = Label(player_, &font_noto_sans_basic_16_4, kTextDim);
-    lv_obj_set_width(player_artist_, 160);
+    lv_obj_set_size(player_artist_, 160, 20);
     lv_obj_set_style_text_align(player_artist_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(player_artist_, LV_LABEL_LONG_DOT);
     lv_obj_align(player_artist_, LV_ALIGN_CENTER, 0, -12);
@@ -392,6 +394,16 @@ void NavView::OnAction(uint32_t seq, bool ok) {
 }
 
 // ── navigation ───────────────────────────────────────────────────────────────
+
+void NavView::ShowArea(const std::string& screen) {
+    for (size_t a = 0; a < areas_.size(); a++) {
+        if (areas_[a].screen == screen) {
+            last_touch_us_ = esp_timer_get_time();
+            GoArea(a);
+            return;
+        }
+    }
+}
 
 bool NavView::AtHome() const { return areas_.empty() || (area_ == home_ && stack_.size() <= 1); }
 
@@ -568,7 +580,8 @@ void NavView::RunLocal(Item& item) {
 
 void NavView::Tick(int64_t now_us) {
     if (areas_.empty()) return;
-    if (!AtHome() && last_touch_us_ && now_us - last_touch_us_ > home_timeout_us_) {
+    bool playing_here = screen_.kind == "player" && screen_.state == "play";  // the player stays while music plays
+    if (!AtHome() && !playing_here && last_touch_us_ && now_us - last_touch_us_ > home_timeout_us_) {
         GoArea(home_);
         return;
     }
