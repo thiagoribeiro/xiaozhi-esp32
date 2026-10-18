@@ -9,6 +9,7 @@
 #include <cJSON.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <material_symbols.h>
 
 #include <cstdio>
 #include <algorithm>
@@ -19,6 +20,7 @@
 LV_FONT_DECLARE(font_noto_sans_basic_16_4);
 LV_FONT_DECLARE(font_noto_sans_basic_30_4);
 LV_FONT_DECLARE(font_material_symbols_20_4);
+LV_FONT_DECLARE(font_material_symbols_16_4);
 
 #define TAG "R2d2Display"
 
@@ -109,8 +111,19 @@ void R2d2Display::SetupUI() {
     lv_obj_align(row, LV_ALIGN_CENTER, 0, 36);
     weather_icon_ = std::make_unique<WeatherIcon>(row, kWeatherIcon);
     temp_label_ = Label(row, &font_noto_sans_basic_30_4, kText);
-    condition_label_ = Label(idle_, &font_noto_sans_basic_16_4, kTextDim);
-    lv_obj_align(condition_label_, LV_ALIGN_CENTER, 0, 76);
+    lv_obj_t* line = lv_obj_create(idle_);  // condition, or "♪ title" while music plays
+    lv_obj_remove_style_all(line);
+    lv_obj_set_size(line, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(line, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(line, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(line, 6, 0);
+    lv_obj_align(line, LV_ALIGN_CENTER, 0, 76);
+    music_icon_ = Label(line, &font_material_symbols_16_4, kAccent);
+    lv_label_set_text(music_icon_, MATERIAL_SYMBOLS_MUSIC_NOTE);
+    lv_obj_add_flag(music_icon_, LV_OBJ_FLAG_HIDDEN);
+    condition_label_ = Label(line, &font_noto_sans_basic_16_4, kTextDim);
+    lv_obj_set_style_max_width(condition_label_, 150, 0);
+    lv_label_set_long_mode(condition_label_, LV_LABEL_LONG_DOT);
 
     // ── conversation: the face and its state label ──
     talk_ = Plain(root_);
@@ -318,7 +331,13 @@ void R2d2Display::ShowWeather() {
     char text[48];
     snprintf(text, sizeof(text), "%.0f°", weather_.temp_c);
     lv_label_set_text(temp_label_, text);
-    if (weather_.rain_pct >= 0) {
+    bool music = !weather_.now_playing.empty();
+    if (music) lv_obj_remove_flag(music_icon_, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(music_icon_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_color(music_icon_, Rgb(weather_.paused ? kTextFaint : kAccent), 0);
+    if (music) {
+        lv_label_set_text(condition_label_, weather_.now_playing.c_str());
+    } else if (weather_.rain_pct >= 0) {
         snprintf(text, sizeof(text), "%s · %d%%", weather_.condition.c_str(), weather_.rain_pct);
     } else {
         snprintf(text, sizeof(text), "%s", weather_.condition.c_str());

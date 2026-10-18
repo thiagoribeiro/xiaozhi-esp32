@@ -12,6 +12,8 @@
 
 #include <cJSON.h>
 #include <esp_log.h>
+
+#include <cstring>
 #include <esp_app_desc.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
@@ -210,6 +212,13 @@ bool CoreClient::PollStatus() {
         if (cJSON_IsString(condition)) weather.condition = condition->valuestring;
         if (cJSON_IsString(icon)) weather.icon = icon->valuestring;
         weather.rain_pct = cJSON_IsNumber(rain) ? rain->valueint : -1;
+    }
+    cJSON* music = cJSON_GetObjectItem(root, "music");  // null while nothing plays
+    if (cJSON_IsObject(music)) {
+        cJSON* title = cJSON_GetObjectItem(music, "title");
+        cJSON* state = cJSON_GetObjectItem(music, "state");
+        if (cJSON_IsString(title)) weather.now_playing = title->valuestring;
+        weather.paused = cJSON_IsString(state) && strcmp(state->valuestring, "pause") == 0;
     }
     cJSON* night = cJSON_GetObjectItem(root, "night");
     if (cJSON_IsObject(night)) {

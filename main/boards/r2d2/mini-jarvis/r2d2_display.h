@@ -36,6 +36,10 @@ struct Weather {
     std::string condition;  // HUD label: "Chuva provável", "Estável"...
     std::string icon;       // clear / rain / storm / fog
     int rain_pct = -1;      // -1: unknown
+    // The R2D2's music (status "music"): while a track is on, the condition
+    // line shows "♪ title" instead — the discreet indicator of the Mídia plan.
+    std::string now_playing;
+    bool paused = false;
 };
 
 class R2d2Display : public SpiLcdDisplay {
@@ -79,6 +83,7 @@ private:
     lv_obj_t* date_label_ = nullptr;
     lv_obj_t* temp_label_ = nullptr;
     lv_obj_t* condition_label_ = nullptr;
+    lv_obj_t* music_icon_ = nullptr;
     lv_obj_t* state_label_ = nullptr;
     std::unique_ptr<Face> face_;
     std::unique_ptr<WeatherIcon> weather_icon_;
