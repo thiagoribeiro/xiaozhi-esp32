@@ -194,7 +194,7 @@ NavView::NavView(lv_obj_t* parent, CoreClient* client) : client_(client) {
     caption_ = Label(root_, &font_noto_sans_basic_16_4, kTextDim);
     lv_obj_align(caption_, LV_ALIGN_CENTER, 0, 70);
 
-    // ── player: progress arc on the rim, track, artist, time, controls, volume ──
+    // ── player: progress arc on the rim (open at the top, under the area dots), track, artist, time, controls, volume ──
     player_ = Plain(root_);
     lv_obj_set_size(player_, LV_PCT(100), LV_PCT(100));
     player_arc_ = lv_arc_create(player_);
@@ -202,8 +202,10 @@ NavView::NavView(lv_obj_t* parent, CoreClient* client) : client_(client) {
     lv_obj_remove_flag(player_arc_, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(player_arc_, 226, 226);
     lv_obj_center(player_arc_);
-    lv_arc_set_rotation(player_arc_, 135);
-    lv_arc_set_bg_angles(player_arc_, 0, 270);
+    // The gap goes at the top, where the area dots are: from ~1 o'clock round
+    // to ~11 o'clock (LVGL angles: 0 = 3 o'clock, clockwise; 270 = top).
+    lv_arc_set_rotation(player_arc_, 300);
+    lv_arc_set_bg_angles(player_arc_, 0, 300);
     lv_arc_set_range(player_arc_, 0, 1000);
     lv_obj_set_style_arc_width(player_arc_, 4, LV_PART_MAIN);
     lv_obj_set_style_arc_width(player_arc_, 4, LV_PART_INDICATOR);
