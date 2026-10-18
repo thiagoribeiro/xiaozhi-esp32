@@ -7,7 +7,8 @@
 // brings the area on the left. What each screen holds comes from the Core
 // (/satellite/screen/<id>, r2d2 repo agent_core/channels/satellite/screens.py);
 // this file only knows how to draw the kinds: list, metrics, chart, photo,
-// note and the device's own status. "home" is the display's idle clock.
+// note, player (the R2D2's music, which sounds in the living room) and the
+// device's own status. "home" is the display's idle clock.
 #pragma once
 
 #include "display/lvgl_display/lvgl_image.h"
@@ -15,6 +16,7 @@
 #include <cJSON.h>
 #include <lvgl.h>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,6 +43,7 @@ public:
     void OnGesture(Gesture gesture, int x, int y);
     void Tick(int64_t now_us);   // auto-home, live refreshes
     bool AtHome() const;         // home area, top level: the display shows its clock
+    void ShowArea(const std::string& screen);  // jump to an area by its screen id ("media")
     bool ready() const { return !areas_.empty(); }
     lv_obj_t* obj() const { return root_; }
 
@@ -57,6 +60,11 @@ private:
         std::vector<std::pair<std::string, std::string>> metrics;  // value, label
         std::vector<float> chart;                                  // NAN = gap
         std::string chart_value, chart_range;
+        // player: the Core's MusicService state; acts = JSON bodies for /satellite/action
+        std::string state, track, artist;
+        float elapsed = 0, duration = 0;
+        int volume = -1;
+        std::map<std::string, std::string> acts;
         bool loading = true;
         bool failed = false;  // no answer: a tap retries
     };
@@ -72,6 +80,12 @@ private:
     void RenderMetrics();
     void RenderChart();
     void RenderDevice();
+    void RenderPlayer();
+    void RenderPlayerProgress(int64_t now_us);
+    void TapPlayer(int x, int y);
+    void RenderQueue();
+    void TapQueue(int x, int y);
+    bool IsQueue() const { return screen_.id == "media_queue"; }
     void Tap(int x, int y);
     void RunLocal(Item& item);
     int Pages() const;
@@ -96,6 +110,22 @@ private:
     lv_obj_t* chart_range_ = nullptr;
     lv_obj_t* image_ = nullptr;
     lv_obj_t* caption_ = nullptr;
+    lv_obj_t* player_ = nullptr;
+    lv_obj_t* player_arc_ = nullptr;
+    lv_obj_t* player_track_ = nullptr;
+    lv_obj_t* player_artist_ = nullptr;
+    lv_obj_t* player_time_ = nullptr;
+    lv_obj_t* player_toggle_ = nullptr;
+    lv_obj_t* player_toggle_icon_ = nullptr;
+    lv_obj_t* player_prev_ = nullptr;
+    lv_obj_t* player_next_ = nullptr;
+
+    // queue (below the player): next tracks + two big volume buttons
+    lv_obj_t* queue_ = nullptr;
+    std::vector<lv_obj_t*> queue_tracks_;
+    lv_obj_t* queue_volume_ = nullptr;
+    int64_t player_loaded_us_ = 0;   // when elapsed was true (interpolated from here)
+    int64_t next_progress_us_ = 0;
     std::unique_ptr<LvglAllocatedImage> image_data_;
 
     std::vector<Area> areas_;

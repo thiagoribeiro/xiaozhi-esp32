@@ -5,10 +5,12 @@
 #include "board.h"
 #include "device_state.h"
 #include "r2d2_core_client.h"
+#include "settings.h"
 
 #include <cJSON.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <material_symbols.h>
 
 #include <cstdio>
 #include <algorithm>
@@ -19,6 +21,7 @@
 LV_FONT_DECLARE(font_noto_sans_basic_16_4);
 LV_FONT_DECLARE(font_noto_sans_basic_30_4);
 LV_FONT_DECLARE(font_material_symbols_20_4);
+LV_FONT_DECLARE(font_material_symbols_16_4);
 
 #define TAG "R2d2Display"
 
@@ -61,6 +64,12 @@ lv_obj_t* Label(lv_obj_t* parent, const lv_font_t* font, uint32_t color) {
 void Show(lv_obj_t* obj, bool visible) {
     if (visible) lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Music playing on the device counts as idle for the screen: clock, navigation, gestures.
+bool UiIdle(DeviceState state) {
+    return state == kDeviceStateIdle ||
+           (state == kDeviceStateNotifying && Application::GetInstance().IsPlayingMedia());
 }
 
 bool ShowsOwnScreen(DeviceState state) {
@@ -109,8 +118,19 @@ void R2d2Display::SetupUI() {
     lv_obj_align(row, LV_ALIGN_CENTER, 0, 36);
     weather_icon_ = std::make_unique<WeatherIcon>(row, kWeatherIcon);
     temp_label_ = Label(row, &font_noto_sans_basic_30_4, kText);
-    condition_label_ = Label(idle_, &font_noto_sans_basic_16_4, kTextDim);
-    lv_obj_align(condition_label_, LV_ALIGN_CENTER, 0, 76);
+    lv_obj_t* line = lv_obj_create(idle_);  // condition, or "♪ title" while music plays
+    lv_obj_remove_style_all(line);
+    lv_obj_set_size(line, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(line, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(line, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(line, 6, 0);
+    lv_obj_align(line, LV_ALIGN_CENTER, 0, 76);
+    music_icon_ = Label(line, &font_material_symbols_16_4, kAccent);
+    lv_label_set_text(music_icon_, MATERIAL_SYMBOLS_MUSIC_NOTE);
+    lv_obj_add_flag(music_icon_, LV_OBJ_FLAG_HIDDEN);
+    condition_label_ = Label(line, &font_noto_sans_basic_16_4, kTextDim);
+    lv_obj_set_style_max_width(condition_label_, 150, 0);
+    lv_label_set_long_mode(condition_label_, LV_LABEL_LONG_DOT);
 
     // ── conversation: the face and its state label ──
     talk_ = Plain(root_);
@@ -160,6 +180,52 @@ void R2d2Display::OnTick(lv_timer_t* timer) {
     if (self->nav_) self->nav_->Tick(now);
     self->Refresh();
     self->UpdateNight(now);
+    Application::GetInstance().Schedule([self]() { self->MediaTryStart(); });
+}
+
+void R2d2Display::ApplyMedia(const cJSON* media) {
+    if (!cJSON_IsObject(media)) return;
+    const cJSON* epoch = cJSON_GetObjectItem(media, "epoch");
+    const cJSON* gen = cJSON_GetObjectItem(media, "generation");
+    const cJSON* action = cJSON_GetObjectItem(media, "action");
+    const cJSON* url = cJSON_GetObjectItem(media, "url");
+    if (!cJSON_IsNumber(gen) || !cJSON_IsString(action)) return;
+    int64_t e = cJSON_IsNumber(epoch) ? (int64_t)epoch->valuedouble : 0;
+    uint32_t g = (uint32_t)gen->valuedouble;
+    bool play = strcmp(action->valuestring, "play") == 0 && cJSON_IsString(url);
+    std::string u = play ? url->valuestring : "";
+    Application::GetInstance().Schedule([this, e, g, play, u]() { MediaApply(e, g, play, u); });
+}
+
+void R2d2Display::MediaApply(int64_t epoch, uint32_t generation, bool play, std::string url) {
+    if (epoch == media_epoch_ && generation <= media_gen_) return;  // old news
+    media_epoch_ = epoch;
+    media_gen_ = generation;
+    auto& app = Application::GetInstance();
+    ESP_LOGI(TAG, "media gen %lu: %s", (unsigned long)generation, play ? "play" : "stop");
+    pending_url_.clear();
+    if (app.IsPlayingMedia()) app.StopMedia();
+    if (play) {
+        pending_url_ = std::move(url);
+        pending_gen_ = generation;
+        MediaTryStart();
+    }
+}
+
+void R2d2Display::MediaTryStart() {
+    auto& app = Application::GetInstance();
+    // after a conversation or a stop, wait for idle (the notify worker may still be exiting)
+    if (pending_url_.empty() || app.GetDeviceState() != kDeviceStateIdle) return;
+    std::string url = std::move(pending_url_);
+    pending_url_.clear();
+    uint32_t gen = pending_gen_;
+    CoreClient* client = client_;
+    app.StartMedia(url, [client, gen](bool ok) {
+        if (client) client->MediaEvent(ok ? "ended" : "error", gen);
+    });
+    if (!app.IsPlayingMedia()) {
+        pending_url_ = url;  // busy for a moment: try again on the next tick
+    }
 }
 
 void R2d2Display::SetNight(int start_hour, int end_hour, int brightness) {
@@ -170,13 +236,33 @@ void R2d2Display::SetNight(int start_hour, int end_hour, int brightness) {
     next_night_check_us_ = 0;
 }
 
+void R2d2Display::SetNightCurve(float fraction, int floor) {
+    DisplayLockGuard lock(this);
+    night_fraction_ = fraction < 0 ? -1 : std::clamp(fraction, 0.0f, 1.0f);
+    night_floor_ = std::clamp(floor, 1, 100);
+    next_night_check_us_ = 0;
+}
+
 void R2d2Display::UpdateNight(int64_t now_us) {
     if (now_us < next_night_check_us_) return;
     next_night_check_us_ = now_us + kNightCheckUs;
     auto backlight = Board::GetInstance().GetBacklight();
     if (!backlight) return;
-    bool idle = Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
+    bool idle = UiIdle(Application::GetInstance().GetDeviceState());
     if (!idle) last_activity_us_ = now_us;  // a conversation counts as activity until it ends
+    if (night_fraction_ >= 0) {  // sun mode: follow the Core's dusk/dawn curve
+        int day = Settings("display").GetInt("brightness", 75);
+        int target = (int)std::lround(day - (day - std::min(night_floor_, day)) * night_fraction_);
+        bool dim = target < day && idle && now_us - last_activity_us_ > kNightAfterActivityUs;
+        if (dim && backlight->brightness() != target) {
+            backlight->SetBrightness(target);  // not permanent: the saved level stays the day one
+            night_dimmed_ = true;
+        } else if (!dim && night_dimmed_) {
+            backlight->RestoreBrightness();
+            night_dimmed_ = false;
+        }
+        return;
+    }
 
     time_t now = time(nullptr);
     struct tm tm_now;
@@ -204,6 +290,7 @@ bool R2d2Display::OnNav(cJSON* nav) {
 }
 
 void R2d2Display::OnScreen(uint32_t seq, const std::string& id, cJSON* screen) {
+    if (screen) ApplyMedia(cJSON_GetObjectItem(screen, "media"));  // the player screen carries it
     DisplayLockGuard lock(this);
     if (nav_) nav_->OnScreen(seq, id, screen);
     else cJSON_Delete(screen);
@@ -225,7 +312,7 @@ void R2d2Display::OnGesture(Gesture gesture, int x, int y) {
     DisplayLockGuard lock(this);
     // Only when nothing else owns the screen: the conversation's face and its
     // chart ignore sideways/up/down (a long press, handled by the board, ends it).
-    if (!nav_ || Application::GetInstance().GetDeviceState() != kDeviceStateIdle) return;
+    if (!nav_ || !UiIdle(Application::GetInstance().GetDeviceState())) return;
     chart_until_us_ = 0;
     nav_->OnGesture(gesture, x, y);
     Refresh();
@@ -259,6 +346,14 @@ void R2d2Display::SetChatMessage(const char* role, const char* content) {
             DisplayLockGuard lock(this);
             ShowChart(payload);
             Refresh();
+        } else if (cJSON_IsString(kind) && strcmp(kind->valuestring, "media") == 0) {
+            ApplyMedia(payload);  // sent as a voice session closes: resume / start own music
+            cJSON* action = cJSON_GetObjectItem(payload, "action");
+            if (cJSON_IsString(action) && strcmp(action->valuestring, "play") == 0) {
+                DisplayLockGuard lock(this);
+                if (nav_) nav_->ShowArea("media");  // "toca X" → the player, not the clock
+                Refresh();
+            }
         } else {
             ESP_LOGW(TAG, "unknown Core message: %.120s", content);
         }
@@ -318,7 +413,13 @@ void R2d2Display::ShowWeather() {
     char text[48];
     snprintf(text, sizeof(text), "%.0f°", weather_.temp_c);
     lv_label_set_text(temp_label_, text);
-    if (weather_.rain_pct >= 0) {
+    bool music = !weather_.now_playing.empty();
+    if (music) lv_obj_remove_flag(music_icon_, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(music_icon_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_color(music_icon_, Rgb(weather_.paused ? kTextFaint : kAccent), 0);
+    if (music) {
+        lv_label_set_text(condition_label_, weather_.now_playing.c_str());
+    } else if (weather_.rain_pct >= 0) {
         snprintf(text, sizeof(text), "%s · %d%%", weather_.condition.c_str(), weather_.rain_pct);
     } else {
         snprintf(text, sizeof(text), "%s", weather_.condition.c_str());
@@ -392,7 +493,7 @@ void R2d2Display::Refresh() {
     // Which face, from the device state and the last emotion (face.py states).
     std::string face_state, hint;
     int64_t now = esp_timer_get_time();
-    if (state == kDeviceStateIdle) {
+    if (UiIdle(state)) {
         face_state = "";
     } else if (now < error_until_us_) {
         face_state = "error";
@@ -414,7 +515,7 @@ void R2d2Display::Refresh() {
         hint = IsEmotion(emotion_) ? emotion_ : "";
     }
 
-    if (state == kDeviceStateIdle && chart_until_us_ > now + kChartAfterTalkUs) {
+    if (UiIdle(state) && chart_until_us_ > now + kChartAfterTalkUs) {
         chart_until_us_ = now + kChartAfterTalkUs;  // the conversation is over: the chart goes too
     }
     if (now < chart_until_us_) {

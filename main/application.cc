@@ -1054,7 +1054,7 @@ void Application::HandleStateChangedEvent() {
             audio_service_.ResetDecoder();
             break;
         case kDeviceStateNotifying:
-            display->SetStatus(Lang::Strings::SPEAKING);
+            if (!media_mode_) display->SetStatus(Lang::Strings::SPEAKING);  // music keeps the screen
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             break;
@@ -1148,10 +1148,62 @@ void Application::StopNotification() {
     notify_player_.Stop();
     audio_service_.ResetDecoder();
     auto& board = Board::GetInstance();
-    board.GetDisplay()->SetChatMessage("assistant", "");
+    if (!media_mode_) board.GetDisplay()->SetChatMessage("assistant", "");
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    media_mode_ = false;
+    media_finished_ = nullptr;
     if (GetDeviceState() == kDeviceStateNotifying) {
         SetDeviceState(kDeviceStateIdle);
+    }
+}
+
+void Application::StartMedia(std::string audio_url, std::function<void(bool)> on_finished) {
+    if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy()) {
+        ESP_LOGW(TAG, "Media not started: device busy");
+        return;
+    }
+    auto& board = Board::GetInstance();
+    board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    audio_service_.EnableVoiceProcessing(false);
+    audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+    audio_service_.ReleaseWakeWordResources();
+    while (audio_service_.PopPacketFromSendQueue()) {
+    }
+    media_mode_ = true;  // before the state change: the display keeps its own screen
+    media_finished_ = std::move(on_finished);
+    if (!SetDeviceState(kDeviceStateNotifying)) {
+        media_mode_ = false;
+        media_finished_ = nullptr;
+        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        return;
+    }
+    audio_service_.ResetDecoder();
+    uint32_t playback_id = ++notification_playback_id_;
+    if (playback_id == 0) playback_id = ++notification_playback_id_;
+    bool started = notify_player_.Start(
+        std::move(audio_url), {}, playback_id, [](uint32_t, const std::string&) {},
+        [this](uint32_t id, bool success) {
+            Schedule([this, id, success]() {
+                if (GetDeviceState() != kDeviceStateNotifying || notification_playback_id_ != id || !media_mode_) {
+                    return;
+                }
+                auto finished = std::move(media_finished_);
+                ESP_LOGI(TAG, "Media playback %lu %s", static_cast<unsigned long>(id), success ? "ended" : "failed");
+                StopNotification();
+                if (finished) finished(success);
+            });
+        });
+    if (!started) {
+        ESP_LOGE(TAG, "Failed to start media playback");
+        auto finished = std::move(media_finished_);
+        StopNotification();
+        if (finished) finished(false);
+    }
+}
+
+void Application::StopMedia() {
+    if (media_mode_ && GetDeviceState() == kDeviceStateNotifying) {
+        StopNotification();
     }
 }
 

@@ -14,11 +14,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 
 LV_FONT_DECLARE(font_noto_sans_basic_16_4);
 LV_FONT_DECLARE(font_noto_sans_basic_20_4);
 LV_FONT_DECLARE(font_material_symbols_16_4);
+LV_FONT_DECLARE(font_material_symbols_20_4);
 
 #define TAG "R2d2Nav"
 
@@ -35,6 +37,17 @@ constexpr int64_t kReloadAfterActionUs = 900 * 1000;  // let a switch report its
 constexpr int64_t kDeviceRefreshUs = 2 * 1000 * 1000;
 constexpr int64_t kLiveRefreshUs = 5 * 1000 * 1000;
 constexpr int64_t kLoadTimeoutUs = 8 * 1000 * 1000;
+constexpr int64_t kPlayerRefreshUs = 3 * 1000 * 1000;   // the queue may move on its own
+constexpr int64_t kPlayerProgressUs = 1000 * 1000;      // arc and clock, interpolated locally
+// player tap zones (screen pixels): the controls row; above it, play/pause
+constexpr int kControlsTop = 146, kControlsBottom = 194;
+
+std::string MinSec(float seconds) {
+    int s = std::max(0, (int)seconds);
+    char text[16];
+    snprintf(text, sizeof(text), "%d:%02d", s / 60, s % 60);
+    return text;
+}
 
 lv_obj_t* Plain(lv_obj_t* parent) {
     lv_obj_t* obj = lv_obj_create(parent);
@@ -182,6 +195,80 @@ NavView::NavView(lv_obj_t* parent, CoreClient* client) : client_(client) {
     caption_ = Label(root_, &font_noto_sans_basic_16_4, kTextDim);
     lv_obj_align(caption_, LV_ALIGN_CENTER, 0, 70);
 
+    // ── player: progress arc on the rim (open at the top, under the area dots), track, artist, time, controls, volume ──
+    player_ = Plain(root_);
+    lv_obj_set_size(player_, LV_PCT(100), LV_PCT(100));
+    player_arc_ = lv_arc_create(player_);
+    lv_obj_remove_style(player_arc_, nullptr, LV_PART_KNOB);
+    lv_obj_remove_flag(player_arc_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(player_arc_, 226, 226);
+    lv_obj_center(player_arc_);
+    // The gap goes at the top, where the area dots are: from ~1 o'clock round
+    // to ~11 o'clock (LVGL angles: 0 = 3 o'clock, clockwise; 270 = top).
+    lv_arc_set_rotation(player_arc_, 300);
+    lv_arc_set_bg_angles(player_arc_, 0, 300);
+    lv_arc_set_range(player_arc_, 0, 1000);
+    lv_obj_set_style_arc_width(player_arc_, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(player_arc_, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(player_arc_, Rgb(kHairline), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(player_arc_, Rgb(kAccent), LV_PART_INDICATOR);
+    // One line each (a long title wrapped over the artist, 2026-10-18): the
+    // title scrolls when it doesn't fit, the artist ends in dots.
+    player_track_ = Label(player_, &font_noto_sans_basic_20_4, kText);
+    lv_obj_set_width(player_track_, 170);
+    lv_obj_set_style_text_align(player_track_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(player_track_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_align(player_track_, LV_ALIGN_CENTER, 0, -38);
+    player_artist_ = Label(player_, &font_noto_sans_basic_16_4, kTextDim);
+    lv_obj_set_size(player_artist_, 160, 20);
+    lv_obj_set_style_text_align(player_artist_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(player_artist_, LV_LABEL_LONG_DOT);
+    lv_obj_align(player_artist_, LV_ALIGN_CENTER, 0, -12);
+    player_time_ = Label(player_, &font_noto_sans_basic_16_4, kTextFaint);
+    lv_obj_align(player_time_, LV_ALIGN_CENTER, 0, 12);
+    player_prev_ = Label(player_, &font_material_symbols_20_4, kTextDim);
+    lv_label_set_text(player_prev_, MATERIAL_SYMBOLS_SKIP_PREVIOUS);
+    lv_obj_align(player_prev_, LV_ALIGN_CENTER, -60, 50);
+    player_next_ = Label(player_, &font_material_symbols_20_4, kTextDim);
+    lv_label_set_text(player_next_, MATERIAL_SYMBOLS_SKIP_NEXT);
+    lv_obj_align(player_next_, LV_ALIGN_CENTER, 60, 50);
+    player_toggle_ = Plain(player_);
+    lv_obj_set_size(player_toggle_, 46, 46);
+    lv_obj_set_style_radius(player_toggle_, 23, 0);
+    lv_obj_set_style_bg_opa(player_toggle_, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(player_toggle_, Rgb(kAccent), 0);
+    lv_obj_align(player_toggle_, LV_ALIGN_CENTER, 0, 50);
+    player_toggle_icon_ = Label(player_toggle_, &font_material_symbols_20_4, kBg);
+    lv_obj_center(player_toggle_icon_);
+    // volume lives in the queue screen (swipe up), not here
+
+    // ── queue: the next three tracks, then two BIG volume buttons (- / +) ──
+    queue_ = Plain(root_);
+    lv_obj_set_size(queue_, LV_PCT(100), LV_PCT(100));
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t* label = Label(queue_, &font_noto_sans_basic_16_4, i == 0 ? kText : kTextDim);
+        lv_obj_set_size(label, 176, 20);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+        lv_obj_align(label, LV_ALIGN_CENTER, 0, -56 + i * 24);
+        queue_tracks_.push_back(label);
+    }
+    queue_volume_ = Label(queue_, &font_noto_sans_basic_16_4, kTextDim);
+    lv_obj_align(queue_volume_, LV_ALIGN_CENTER, 0, 22);
+    for (int side = -1; side <= 1; side += 2) {
+        lv_obj_t* button = Plain(queue_);
+        lv_obj_set_size(button, 84, 56);
+        lv_obj_set_style_radius(button, 18, 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(button, Rgb(kRowBg), 0);
+        lv_obj_set_style_border_color(button, Rgb(kAccent), 0);
+        lv_obj_set_style_border_width(button, 2, 0);
+        lv_obj_align(button, LV_ALIGN_CENTER, side * 48, 64);
+        lv_obj_t* icon = Label(button, &font_material_symbols_20_4, kText);
+        lv_label_set_text(icon, side < 0 ? MATERIAL_SYMBOLS_VOLUME_DOWN : MATERIAL_SYMBOLS_VOLUME_UP);
+        lv_obj_center(icon);
+    }
+
     footer_arrow_ = Label(root_, &font_material_symbols_16_4, kTextFaint);
     lv_label_set_text(footer_arrow_, MATERIAL_SYMBOLS_KEYBOARD_ARROW_UP);
     lv_obj_align(footer_arrow_, LV_ALIGN_BOTTOM_MID, 0, -40);
@@ -229,6 +316,23 @@ void NavView::OnScreen(uint32_t seq, const std::string& id, cJSON* json) {
         s.text = Str(json, "text");
         s.image = Str(json, "image");
         s.caption = Str(json, "caption");
+        s.state = Str(json, "state");
+        s.track = Str(json, "track");
+        s.artist = Str(json, "artist");
+        const cJSON* num = cJSON_GetObjectItem(json, "elapsed");
+        if (cJSON_IsNumber(num)) s.elapsed = (float)num->valuedouble;
+        num = cJSON_GetObjectItem(json, "duration");
+        if (cJSON_IsNumber(num)) s.duration = (float)num->valuedouble;
+        num = cJSON_GetObjectItem(json, "volume");
+        if (cJSON_IsNumber(num)) s.volume = num->valueint;
+        const cJSON* acts = cJSON_GetObjectItem(json, "acts");
+        const cJSON* act_entry = nullptr;
+        cJSON_ArrayForEach(act_entry, acts) {
+            if (!cJSON_IsObject(act_entry) || act_entry->string == nullptr) continue;
+            char* text = cJSON_PrintUnformatted(act_entry);
+            if (text) s.acts[act_entry->string] = text;
+            cJSON_free(text);
+        }
         const cJSON* entry = nullptr;
         cJSON_ArrayForEach(entry, cJSON_GetObjectItem(json, "items")) {
             Item item{Str(entry, "label"), Str(entry, "value"), Str(entry, "state"), Str(entry, "open"),
@@ -277,7 +381,11 @@ void NavView::OnScreen(uint32_t seq, const std::string& id, cJSON* json) {
     image_data_.reset();
     lv_image_set_src(image_, nullptr);
     if (!screen_.image.empty()) client_->FetchImage(screen_.image, seq_);
-    next_refresh_us_ = esp_timer_get_time() + (screen_.id == "camera_live" ? kLiveRefreshUs : kDeviceRefreshUs);
+    int64_t now_us = esp_timer_get_time();
+    next_refresh_us_ = now_us + (screen_.id == "camera_live" ? kLiveRefreshUs
+                                 : screen_.kind == "player" ? kPlayerRefreshUs : kDeviceRefreshUs);
+    player_loaded_us_ = now_us;
+    next_progress_us_ = now_us + kPlayerProgressUs;
     Render();
 }
 
@@ -297,6 +405,16 @@ void NavView::OnAction(uint32_t seq, bool ok) {
 }
 
 // ── navigation ───────────────────────────────────────────────────────────────
+
+void NavView::ShowArea(const std::string& screen) {
+    for (size_t a = 0; a < areas_.size(); a++) {
+        if (areas_[a].screen == screen) {
+            last_touch_us_ = esp_timer_get_time();
+            GoArea(a);
+            return;
+        }
+    }
+}
 
 bool NavView::AtHome() const { return areas_.empty() || (area_ == home_ && stack_.size() <= 1); }
 
@@ -339,7 +457,7 @@ void NavView::Load(const std::string& id, bool quiet, const std::string& title) 
 }
 
 int NavView::Pages() const {
-    if (screen_.kind != "list") return 1;
+    if (screen_.kind != "list" || IsQueue()) return 1;
     return std::max<int>(1, (screen_.items.size() + kRows - 1) / kRows);
 }
 
@@ -387,6 +505,14 @@ void NavView::Tap(int x, int y) {
         next_refresh_us_ = 0;
         return;
     }
+    if (screen_.kind == "player") {
+        TapPlayer(x, y);
+        return;
+    }
+    if (IsQueue()) {
+        TapQueue(x, y);
+        return;
+    }
     if (screen_.kind != "list") return;
     for (int i = 0; i < kRows; i++) {
         if (y < kRowTop[i] || y > kRowTop[i] + kRowH) continue;
@@ -414,6 +540,59 @@ void NavView::Tap(int x, int y) {
     }
 }
 
+void NavView::TapPlayer(int x, int y) {
+    const char* key;
+    if (y > kControlsBottom) {
+        return;  // below the controls: the "Fila" hint, nothing to press by accident
+    } else if (y >= kControlsTop && y <= kControlsBottom && x < 92) {
+        key = "previous";
+    } else if (y >= kControlsTop && y <= kControlsBottom && x > 148) {
+        key = "next";
+    } else {
+        key = "toggle";  // the big play/pause button and the whole middle of the screen
+    }
+    auto act = screen_.acts.find(key);
+    if (act == screen_.acts.end()) return;
+    ESP_LOGI(TAG, "player %s", key);
+    if (act->second.find("\"local\"") != std::string::npos) {  // the device's own speaker
+        Item local;
+        cJSON* json = cJSON_Parse(act->second.c_str());
+        local.local = json ? Str(json, "local") : "";
+        cJSON_Delete(json);
+        RunLocal(local);
+        return;
+    }
+    if (std::string(key) == "toggle" && screen_.state != "stop") {  // optimistic: the reload confirms it
+        screen_.elapsed += (esp_timer_get_time() - player_loaded_us_) / 1e6f * (screen_.state == "play");
+        player_loaded_us_ = esp_timer_get_time();
+        screen_.state = screen_.state == "play" ? "pause" : "play";
+    }
+    client_->Action(act->second, seq_);
+    Render();
+}
+
+void NavView::TapQueue(int x, int y) {
+    if (y < 120) return;  // the track list: nothing to tap
+    for (auto& item : screen_.items) {  // the bottom half is all volume: left = -, right = +
+        if (item.local == (x < 120 ? "volume-" : "volume+")) {
+            RunLocal(item);
+            return;
+        }
+    }
+}
+
+void NavView::RenderQueue() {
+    size_t shown = 0;
+    for (const auto& item : screen_.items) {
+        if (!item.local.empty() || shown >= queue_tracks_.size()) continue;
+        lv_label_set_text(queue_tracks_[shown++], item.label.c_str());
+    }
+    for (; shown < queue_tracks_.size(); shown++) lv_label_set_text(queue_tracks_[shown], "");
+    char text[24];
+    snprintf(text, sizeof(text), "volume %d%%", Board::GetInstance().GetAudioCodec()->output_volume());
+    lv_label_set_text(queue_volume_, text);
+}
+
 void NavView::RunLocal(Item& item) {
     auto& board = Board::GetInstance();
     if (item.local == "volume+" || item.local == "volume-") {
@@ -438,7 +617,8 @@ void NavView::RunLocal(Item& item) {
 
 void NavView::Tick(int64_t now_us) {
     if (areas_.empty()) return;
-    if (!AtHome() && last_touch_us_ && now_us - last_touch_us_ > home_timeout_us_) {
+    bool playing_here = screen_.kind == "player" && screen_.state == "play";  // the player stays while music plays
+    if (!AtHome() && !playing_here && last_touch_us_ && now_us - last_touch_us_ > home_timeout_us_) {
         GoArea(home_);
         return;
     }
@@ -451,12 +631,19 @@ void NavView::Tick(int64_t now_us) {
         Render();
         return;
     }
+    if (screen_.kind == "player" && !screen_.loading && now_us >= next_progress_us_) {
+        next_progress_us_ = now_us + kPlayerProgressUs;
+        RenderPlayerProgress(now_us);
+    }
     if (now_us < next_refresh_us_ || screen_.loading) return;
     if (reload_pending_) {
         Load(screen_.id, true);
     } else if (screen_.kind == "device") {
         next_refresh_us_ = now_us + kDeviceRefreshUs;
         Render();
+    } else if (screen_.kind == "player") {
+        next_refresh_us_ = now_us + kPlayerRefreshUs;
+        Load(screen_.id, true);  // quiet: the player stays on screen while it reloads
     } else if (screen_.id == "camera_live" && !screen_.image.empty()) {
         next_refresh_us_ = now_us + kLiveRefreshUs;
         client_->FetchImage(screen_.image, seq_);
@@ -498,6 +685,8 @@ void NavView::Render() {
     Show(chart_box_, kind == "chart");
     Show(image_, kind == "photo");
     Show(caption_, kind == "photo");
+    Show(player_, !screen_.loading && kind == "player");
+    Show(queue_, !screen_.loading && IsQueue());
     for (auto row : rows_) Show(row, false);
 
     std::string title = screen_.title;
@@ -514,11 +703,13 @@ void NavView::Render() {
         return;
     }
     if (kind == "note") lv_label_set_text(note_, screen_.text.c_str());
-    if (kind == "list") RenderList();
+    if (kind == "list" && !IsQueue()) RenderList();
+    if (IsQueue()) RenderQueue();
     if (kind == "metrics") RenderMetrics();
     if (kind == "device") RenderDevice();
     if (kind == "chart") RenderChart();
     if (kind == "photo") lv_label_set_text(caption_, screen_.caption.c_str());
+    if (kind == "player") RenderPlayer();
 
     std::string footer = page_ + 1 < Pages() ? "mais" : screen_.next_name;
     lv_label_set_text(footer_, footer.c_str());
@@ -548,6 +739,34 @@ void NavView::RenderList() {
         Show(row_dots_[i], dot);
         if (dot) lv_obj_set_style_bg_color(row_dots_[i], Rgb(StateColor(item.state)), 0);
     }
+}
+
+void NavView::RenderPlayer() {
+    bool stopped = screen_.state != "play" && screen_.state != "pause";
+    lv_label_set_text(player_track_, screen_.track.c_str());
+    lv_label_set_text(player_artist_, screen_.artist.c_str());
+    lv_obj_set_style_text_color(player_track_, Rgb(stopped ? kTextDim : kText), 0);
+    lv_label_set_text(player_toggle_icon_, screen_.state == "play" ? MATERIAL_SYMBOLS_PAUSE : MATERIAL_SYMBOLS_PLAY_ARROW);
+    lv_obj_set_style_bg_color(player_toggle_, Rgb(stopped ? kHairline : kAccent), 0);
+    Show(player_prev_, !stopped);
+    Show(player_next_, !stopped);
+    Show(player_arc_, !stopped);
+    lv_obj_set_style_arc_color(player_arc_, Rgb(screen_.state == "play" ? kAccent : kTextFaint), LV_PART_INDICATOR);
+    RenderPlayerProgress(esp_timer_get_time());
+}
+
+void NavView::RenderPlayerProgress(int64_t now_us) {
+    if (screen_.state != "play" && screen_.state != "pause") {
+        lv_label_set_text(player_time_, "");
+        return;
+    }
+    float elapsed = screen_.elapsed;
+    if (screen_.state == "play") elapsed += (now_us - player_loaded_us_) / 1e6f;
+    if (screen_.duration > 0) elapsed = std::min(elapsed, screen_.duration);
+    std::string text = MinSec(elapsed);
+    if (screen_.duration > 0) text += " / " + MinSec(screen_.duration);
+    lv_label_set_text(player_time_, text.c_str());
+    lv_arc_set_value(player_arc_, screen_.duration > 0 ? (int)(1000 * elapsed / screen_.duration) : 0);
 }
 
 void NavView::RenderMetrics() {

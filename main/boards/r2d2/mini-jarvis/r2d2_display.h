@@ -36,6 +36,10 @@ struct Weather {
     std::string condition;  // HUD label: "Chuva provável", "Estável"...
     std::string icon;       // clear / rain / storm / fog
     int rain_pct = -1;      // -1: unknown
+    // The R2D2's music (status "music"): while a track is on, the condition
+    // line shows "♪ title" instead — the discreet indicator of the Mídia plan.
+    std::string now_playing;
+    bool paused = false;
 };
 
 class R2d2Display : public SpiLcdDisplay {
@@ -57,10 +61,17 @@ public:
     void OnScreen(uint32_t seq, const std::string& id, cJSON* screen);
     void OnImage(uint32_t seq, uint8_t* rgb565, size_t size, size_t w, size_t h, size_t stride);
     void OnAction(uint32_t seq, bool ok);
+    // Own music (r2d2 agent_core/music/satellite_player.py): the Core's desired
+    // state {epoch, generation, action: play|stop, url}. Any task; a NULL or
+    // non-object is ignored. Applied on the main task, newest generation wins.
+    void ApplyMedia(const cJSON* media);
     // From the touch panel, via the main task.
     void OnGesture(Gesture gesture, int x, int y);
     // Night dimming while idle (window and level from the Core's status poll).
     void SetNight(int start_hour, int end_hour, int brightness);
+    // Sun mode: how far into the night (0 day … 1 night, ramped over hours after
+    // sunset/sunrise by the Core) and the floor brightness; < 0 = window mode.
+    void SetNightCurve(float fraction, int floor);
     void NoteActivity() { last_activity_us_ = esp_timer_get_time(); }  // any task: a touch began
 
 private:
@@ -70,6 +81,8 @@ private:
     static void OnTick(lv_timer_t* timer);
     void ShowChart(const cJSON* payload);  // display lock held
     void UpdateNight(int64_t now_us);       // display lock held
+    void MediaApply(int64_t epoch, uint32_t generation, bool play, std::string url);  // main task
+    void MediaTryStart();                                                              // main task
 
     lv_obj_t* root_ = nullptr;
     lv_obj_t* idle_ = nullptr;
@@ -79,6 +92,7 @@ private:
     lv_obj_t* date_label_ = nullptr;
     lv_obj_t* temp_label_ = nullptr;
     lv_obj_t* condition_label_ = nullptr;
+    lv_obj_t* music_icon_ = nullptr;
     lv_obj_t* state_label_ = nullptr;
     std::unique_ptr<Face> face_;
     std::unique_ptr<WeatherIcon> weather_icon_;
@@ -91,6 +105,8 @@ private:
     lv_obj_t* chart_state_ = nullptr;
     int64_t chart_until_us_ = 0;
     int night_start_ = 20, night_end_ = 7, night_level_ = 10;
+    float night_fraction_ = -1;   // sun mode when >= 0
+    int night_floor_ = 5;
     bool night_dimmed_ = false;
     std::atomic<int64_t> last_activity_us_{0};
     int64_t next_night_check_us_ = 0;
@@ -108,6 +124,11 @@ private:
     std::string error_variant_;
     int64_t next_variant_us_ = 0;
     int last_clock_min_ = -1;
+    // own music (main task only)
+    int64_t media_epoch_ = 0;
+    uint32_t media_gen_ = 0;
+    uint32_t pending_gen_ = 0;
+    std::string pending_url_;
     const char* wifi_icon_ = nullptr;
 };
 

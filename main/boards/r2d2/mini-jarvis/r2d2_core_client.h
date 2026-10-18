@@ -6,7 +6,8 @@
 //   GET  /satellite/nav             the touch navigation's areas
 //   GET  /satellite/screen/<id>     one screen's content
 //   GET  /satellite/camera.jpg      the door camera, already shrunk
-//   POST /satellite/action          a tapped item's home action
+//   POST /satellite/action          a tapped item's home action (its own music: + desired media)
+//   POST /satellite/media/event     its own music ended / failed → what to play next
 // Requests are queued and run one at a time off the UI; results go back to
 // R2d2Display, which takes its lock. The base URL is the OTA URL's host:
 // .../satellite/ota/ → http://host:port.
@@ -35,12 +36,13 @@ public:
     void FetchScreen(const std::string& id, uint32_t seq);
     void FetchImage(const std::string& path, uint32_t seq);
     void Action(const std::string& json_body, uint32_t seq);
+    void MediaEvent(const char* event, uint32_t generation);
 
     bool online() const { return online_; }
 
 private:
     struct Job {
-        enum Kind { kNav, kScreen, kImage, kAction } kind;
+        enum Kind { kNav, kScreen, kImage, kAction, kMediaEvent } kind;
         std::string arg;
         uint32_t seq;
     };
