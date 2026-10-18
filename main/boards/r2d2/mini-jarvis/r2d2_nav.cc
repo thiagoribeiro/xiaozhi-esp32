@@ -527,6 +527,14 @@ void NavView::TapPlayer(int x, int y) {
     auto act = screen_.acts.find(key);
     if (act == screen_.acts.end()) return;
     ESP_LOGI(TAG, "player %s", key);
+    if (act->second.find("\"local\"") != std::string::npos) {  // the device's own speaker
+        Item local;
+        cJSON* json = cJSON_Parse(act->second.c_str());
+        local.local = json ? Str(json, "local") : "";
+        cJSON_Delete(json);
+        RunLocal(local);
+        return;
+    }
     if (std::string(key) == "toggle" && screen_.state != "stop") {  // optimistic: the reload confirms it
         screen_.elapsed += (esp_timer_get_time() - player_loaded_us_) / 1e6f * (screen_.state == "play");
         player_loaded_us_ = esp_timer_get_time();
@@ -697,8 +705,8 @@ void NavView::RenderPlayer() {
     Show(player_arc_, !stopped);
     lv_obj_set_style_arc_color(player_arc_, Rgb(screen_.state == "play" ? kAccent : kTextFaint), LV_PART_INDICATOR);
     char text[16];
-    if (screen_.volume >= 0) snprintf(text, sizeof(text), "%d%%", screen_.volume);
-    else text[0] = '\0';
+    int volume = screen_.volume >= 0 ? screen_.volume : Board::GetInstance().GetAudioCodec()->output_volume();
+    snprintf(text, sizeof(text), "%d%%", volume);
     lv_label_set_text(player_volume_, text);
     RenderPlayerProgress(esp_timer_get_time());
 }

@@ -52,6 +52,12 @@ void CoreClient::FetchScreen(const std::string& id, uint32_t seq) { Enqueue(Job:
 void CoreClient::FetchImage(const std::string& path, uint32_t seq) { Enqueue(Job::kImage, path, seq); }
 void CoreClient::Action(const std::string& json_body, uint32_t seq) { Enqueue(Job::kAction, json_body, seq); }
 
+void CoreClient::MediaEvent(const char* event, uint32_t generation) {
+    char body[96];
+    snprintf(body, sizeof(body), "{\"event\":\"%s\",\"generation\":%lu}", event, (unsigned long)generation);
+    Enqueue(Job::kMediaEvent, body, 0);
+}
+
 void CoreClient::Run(void* arg) {
     auto* self = static_cast<CoreClient*>(arg);
     int64_t next_status_us = 0;
@@ -66,7 +72,9 @@ void CoreClient::Run(void* arg) {
         }
         // Idle only: no HTTP alongside a conversation's audio, and no token
         // before the device has been through activation.
-        bool idle = Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
+        auto& app = Application::GetInstance();
+        bool idle = app.GetDeviceState() == kDeviceStateIdle ||
+                    (app.GetDeviceState() == kDeviceStateNotifying && app.IsPlayingMedia());
         bool ok = idle && self->PollStatus();
         if (ok && !self->nav_loaded_) self->Handle(Job{Job::kNav, "", 0});
         next_status_us = esp_timer_get_time() + (ok ? kStatusPeriodUs : kRetryPeriodUs);
@@ -138,9 +146,17 @@ void CoreClient::Handle(const Job& job) {
             if (ok) {
                 cJSON* root = cJSON_Parse(body.c_str());
                 ok = root && cJSON_IsTrue(cJSON_GetObjectItem(root, "ok"));
+                if (root) display_->ApplyMedia(cJSON_GetObjectItem(root, "media"));  // own music: act now
                 cJSON_Delete(root);
             }
             display_->OnAction(job.seq, ok);
+            break;
+        }
+        case Job::kMediaEvent: {
+            if (!Request("POST", "/satellite/media/event", job.arg, &body, &code)) return;
+            cJSON* root = cJSON_Parse(body.c_str());
+            if (root) display_->ApplyMedia(cJSON_GetObjectItem(root, "media"));
+            cJSON_Delete(root);
             break;
         }
         case Job::kImage: {
@@ -213,6 +229,7 @@ bool CoreClient::PollStatus() {
         if (cJSON_IsString(icon)) weather.icon = icon->valuestring;
         weather.rain_pct = cJSON_IsNumber(rain) ? rain->valueint : -1;
     }
+    display_->ApplyMedia(cJSON_GetObjectItem(root, "media"));  // keeps the device in step every minute
     cJSON* music = cJSON_GetObjectItem(root, "music");  // null while nothing plays
     if (cJSON_IsObject(music)) {
         cJSON* title = cJSON_GetObjectItem(music, "title");

@@ -10,6 +10,7 @@
 #include <mutex>
 #include <deque>
 #include <memory>
+#include <atomic>
 #include <functional>
 #include <cstdint>
 #include <vector>
@@ -81,6 +82,11 @@ public:
      * Schedule a callback to be executed in the main task
      */
     void Schedule(std::function<void()>&& callback);
+    // r2d2: play an Ogg/Opus URL as music through the notify player (idle only;
+    // a wake word stops it without calling on_finished).
+    void StartMedia(std::string audio_url, std::function<void(bool)> on_finished);
+    void StopMedia();
+    bool IsPlayingMedia() const { return media_mode_.load(); }
 
     /**
      * Alert with status, message, emotion and optional sound
@@ -142,6 +148,10 @@ private:
     AudioService audio_service_;
     NotifyPlayer notify_player_;
     uint32_t notification_playback_id_ = 0;
+    // r2d2: the notify player used for music (no popup sound, no "speaking"
+    // status; the board's screen stays usable). Finished = played to the end.
+    std::atomic<bool> media_mode_{false};
+    std::function<void(bool)> media_finished_;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;

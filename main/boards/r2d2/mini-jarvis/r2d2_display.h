@@ -61,6 +61,10 @@ public:
     void OnScreen(uint32_t seq, const std::string& id, cJSON* screen);
     void OnImage(uint32_t seq, uint8_t* rgb565, size_t size, size_t w, size_t h, size_t stride);
     void OnAction(uint32_t seq, bool ok);
+    // Own music (r2d2 agent_core/music/satellite_player.py): the Core's desired
+    // state {epoch, generation, action: play|stop, url}. Any task; a NULL or
+    // non-object is ignored. Applied on the main task, newest generation wins.
+    void ApplyMedia(const cJSON* media);
     // From the touch panel, via the main task.
     void OnGesture(Gesture gesture, int x, int y);
     // Night dimming while idle (window and level from the Core's status poll).
@@ -74,6 +78,8 @@ private:
     static void OnTick(lv_timer_t* timer);
     void ShowChart(const cJSON* payload);  // display lock held
     void UpdateNight(int64_t now_us);       // display lock held
+    void MediaApply(int64_t epoch, uint32_t generation, bool play, std::string url);  // main task
+    void MediaTryStart();                                                              // main task
 
     lv_obj_t* root_ = nullptr;
     lv_obj_t* idle_ = nullptr;
@@ -113,6 +119,11 @@ private:
     std::string error_variant_;
     int64_t next_variant_us_ = 0;
     int last_clock_min_ = -1;
+    // own music (main task only)
+    int64_t media_epoch_ = 0;
+    uint32_t media_gen_ = 0;
+    uint32_t pending_gen_ = 0;
+    std::string pending_url_;
     const char* wifi_icon_ = nullptr;
 };
 
