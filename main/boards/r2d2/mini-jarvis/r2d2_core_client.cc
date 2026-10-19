@@ -228,6 +228,7 @@ bool CoreClient::PollStatus() {
         if (cJSON_IsString(condition)) weather.condition = condition->valuestring;
         if (cJSON_IsString(icon)) weather.icon = icon->valuestring;
         weather.rain_pct = cJSON_IsNumber(rain) ? rain->valueint : -1;
+        weather.forecast.Parse(cJSON_GetObjectItem(w, "forecast"));   // absent on older Cores: no curve
     }
     display_->ApplyMedia(cJSON_GetObjectItem(root, "media"));  // keeps the device in step every minute
     cJSON* music = cJSON_GetObjectItem(root, "music");  // null while nothing plays

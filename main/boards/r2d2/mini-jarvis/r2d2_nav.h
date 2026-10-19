@@ -6,12 +6,13 @@
 // under the finger. The content follows the finger: a drag to the right
 // brings the area on the left. What each screen holds comes from the Core
 // (/satellite/screen/<id>, r2d2 repo agent_core/channels/satellite/screens.py);
-// this file only knows how to draw the kinds: list, metrics, chart, photo,
+// this file only knows how to draw the kinds: list, metrics, chart, forecast, photo,
 // note, player (the R2D2's music, which sounds in the living room) and the
 // device's own status. "home" is the display's idle clock.
 #pragma once
 
 #include "display/lvgl_display/lvgl_image.h"
+#include "r2d2_forecast.h"
 
 #include <cJSON.h>
 #include <lvgl.h>
@@ -60,6 +61,7 @@ private:
         std::vector<std::pair<std::string, std::string>> metrics;  // value, label
         std::vector<float> chart;                                  // NAN = gap
         std::string chart_value, chart_range;
+        Forecast forecast;                                         // kind "forecast"
         // player: the Core's MusicService state; acts = JSON bodies for /satellite/action
         std::string state, track, artist;
         float elapsed = 0, duration = 0;
@@ -79,6 +81,7 @@ private:
     void RenderList();
     void RenderMetrics();
     void RenderChart();
+    void RenderForecast();
     void RenderDevice();
     void RenderPlayer();
     void RenderPlayerProgress(int64_t now_us);
@@ -108,6 +111,8 @@ private:
     lv_chart_series_t* chart_series_ = nullptr;
     lv_obj_t* chart_value_ = nullptr;
     lv_obj_t* chart_range_ = nullptr;
+    lv_obj_t* forecast_box_ = nullptr;
+    std::unique_ptr<ForecastCurve> forecast_curve_;
     lv_obj_t* image_ = nullptr;
     lv_obj_t* caption_ = nullptr;
     lv_obj_t* player_ = nullptr;

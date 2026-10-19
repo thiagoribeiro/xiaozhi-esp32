@@ -118,6 +118,8 @@ void R2d2Display::SetupUI() {
     lv_obj_align(row, LV_ALIGN_CENTER, 0, 36);
     weather_icon_ = std::make_unique<WeatherIcon>(row, kWeatherIcon);
     temp_label_ = Label(row, &font_noto_sans_basic_30_4, kText);
+    mini_curve_ = std::make_unique<ForecastCurve>(row, 64, 28, false);
+    lv_obj_add_flag(mini_curve_->obj(), LV_OBJ_FLAG_HIDDEN);
     lv_obj_t* line = lv_obj_create(idle_);  // condition, or "♪ title" while music plays
     lv_obj_remove_style_all(line);
     lv_obj_set_size(line, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -407,6 +409,7 @@ void R2d2Display::ShowWeather() {
     if (!weather_.up) {
         lv_label_set_text(temp_label_, "--°");
         lv_label_set_text(condition_label_, "");
+        lv_obj_add_flag(mini_curve_->obj(), LV_OBJ_FLAG_HIDDEN);
         weather_icon_->Draw("cloud", false);
         return;
     }
@@ -419,12 +422,21 @@ void R2d2Display::ShowWeather() {
     lv_obj_set_style_text_color(music_icon_, Rgb(weather_.paused ? kTextFaint : kAccent), 0);
     if (music) {
         lv_label_set_text(condition_label_, weather_.now_playing.c_str());
-    } else if (weather_.rain_pct >= 0) {
-        snprintf(text, sizeof(text), "%s · %d%%", weather_.condition.c_str(), weather_.rain_pct);
     } else {
-        snprintf(text, sizeof(text), "%s", weather_.condition.c_str());
+        // (the music branch used to fall through to here and print the temperature)
+        if (weather_.rain_pct >= 0) {
+            snprintf(text, sizeof(text), "%s · %d%%", weather_.condition.c_str(), weather_.rain_pct);
+        } else {
+            snprintf(text, sizeof(text), "%s", weather_.condition.c_str());
+        }
+        lv_label_set_text(condition_label_, text);
     }
-    lv_label_set_text(condition_label_, text);
+    if (weather_.forecast.empty()) {
+        lv_obj_add_flag(mini_curve_->obj(), LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(mini_curve_->obj(), LV_OBJ_FLAG_HIDDEN);
+        mini_curve_->Draw(weather_.forecast);
+    }
     time_t now = time(nullptr);
     struct tm tm_now;
     localtime_r(&now, &tm_now);
