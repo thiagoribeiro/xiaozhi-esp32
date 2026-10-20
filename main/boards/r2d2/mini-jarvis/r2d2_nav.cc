@@ -190,6 +190,12 @@ NavView::NavView(lv_obj_t* parent, CoreClient* client) : client_(client) {
     chart_range_ = Label(chart_box_, &font_noto_sans_basic_16_4, kTextFaint);
     lv_obj_align(chart_range_, LV_ALIGN_CENTER, 0, 58);
 
+    // "Próximas 6 h": the HUD's curve — y 60..176, clear of the title and the footer arrow
+    forecast_box_ = Plain(root_);
+    lv_obj_set_size(forecast_box_, LV_PCT(100), LV_PCT(100));
+    forecast_curve_ = std::make_unique<ForecastCurve>(forecast_box_, 184, 116, true);
+    lv_obj_align(forecast_curve_->obj(), LV_ALIGN_CENTER, 0, -2);
+
     image_ = lv_image_create(root_);
     lv_obj_align(image_, LV_ALIGN_CENTER, 0, -2);
     caption_ = Label(root_, &font_noto_sans_basic_16_4, kTextDim);
@@ -348,8 +354,9 @@ void NavView::OnScreen(uint32_t seq, const std::string& id, cJSON* json) {
         cJSON_ArrayForEach(entry, cJSON_GetObjectItem(json, "metrics")) {
             s.metrics.emplace_back(Str(entry, "value"), Str(entry, "label"));
         }
+        if (s.kind == "forecast") s.forecast.Parse(json);
         const cJSON* points = cJSON_GetObjectItem(json, "points");
-        if (cJSON_IsArray(points)) {
+        if (s.kind != "forecast" && cJSON_IsArray(points)) {
             const cJSON* decimals = cJSON_GetObjectItem(json, "decimals");
             const cJSON* last = cJSON_GetObjectItem(json, "last");
             int dec = cJSON_IsNumber(decimals) ? std::clamp(decimals->valueint, 0, 3) : 1;
@@ -683,6 +690,7 @@ void NavView::Render() {
     Show(spinner_, screen_.loading);
     Show(metrics_, kind == "metrics" || kind == "device");
     Show(chart_box_, kind == "chart");
+    Show(forecast_box_, !screen_.loading && kind == "forecast");
     Show(image_, kind == "photo");
     Show(caption_, kind == "photo");
     Show(player_, !screen_.loading && kind == "player");
@@ -708,6 +716,7 @@ void NavView::Render() {
     if (kind == "metrics") RenderMetrics();
     if (kind == "device") RenderDevice();
     if (kind == "chart") RenderChart();
+    if (kind == "forecast") RenderForecast();
     if (kind == "photo") lv_label_set_text(caption_, screen_.caption.c_str());
     if (kind == "player") RenderPlayer();
 
@@ -821,5 +830,7 @@ void NavView::RenderChart() {
     lv_label_set_text(chart_value_, screen_.chart_value.c_str());
     lv_label_set_text(chart_range_, screen_.chart_range.c_str());
 }
+
+void NavView::RenderForecast() { forecast_curve_->Draw(screen_.forecast); }
 
 }  // namespace r2d2

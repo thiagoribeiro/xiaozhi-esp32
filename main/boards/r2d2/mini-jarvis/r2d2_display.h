@@ -40,6 +40,8 @@ struct Weather {
     // line shows "♪ title" instead — the discreet indicator of the Mídia plan.
     std::string now_playing;
     bool paused = false;
+    // The next 6 h (status weather.forecast): a small curve beside the temperature.
+    Forecast forecast;
 };
 
 class R2d2Display : public SpiLcdDisplay {
@@ -96,6 +98,7 @@ private:
     lv_obj_t* state_label_ = nullptr;
     std::unique_ptr<Face> face_;
     std::unique_ptr<WeatherIcon> weather_icon_;
+    std::unique_ptr<ForecastCurve> mini_curve_;   // the next 6 h beside the temperature
     lv_obj_t* chart_view_ = nullptr;
     lv_obj_t* chart_ = nullptr;
     lv_chart_series_t* chart_series_ = nullptr;
