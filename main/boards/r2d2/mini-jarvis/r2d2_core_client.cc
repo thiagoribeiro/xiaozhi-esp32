@@ -7,6 +7,7 @@
 #include "device_state.h"
 #include "display/lvgl_display/jpg/jpeg_to_image.h"
 #include "r2d2_display.h"
+#include "r2d2_power.h"
 #include "settings.h"
 #include "system_info.h"
 
@@ -197,7 +198,11 @@ std::string CoreClient::Telemetry() {
         n += snprintf(query + n, sizeof(query) - n, "&battery=%d&charging=%d", level, charging ? 1 : 0);
     }
     if (backlight && n > 0 && n < (int)sizeof(query)) {
-        snprintf(query + n, sizeof(query) - n, "&brightness=%d", backlight->brightness());
+        n += snprintf(query + n, sizeof(query) - n, "&brightness=%d", backlight->brightness());
+    }
+    if (n > 0 && n < (int)sizeof(query)) {  // the battery policy (r2d2_power.h)
+        snprintf(query + n, sizeof(query) - n, "&asleep=%d&cpu_mhz=%d&battery_adc=%d",
+                 power::asleep ? 1 : 0, power::CpuMhz(), power::battery_adc.load());
     }
     return query;
 }

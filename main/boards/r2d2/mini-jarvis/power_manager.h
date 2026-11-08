@@ -16,6 +16,7 @@ private:
     gpio_num_t charging_pin_;
     std::vector<uint16_t> adc_values_;
     uint32_t battery_level_ = 0;
+    uint32_t average_adc_ = 0;
     bool is_charging_ = false;
     bool is_low_battery_ = false;
     int ticks_ = 0;
@@ -66,29 +67,31 @@ private:
         }
         average_adc /= adc_values_.size();
 
-        // 定义电池电量区间 - 根据实际硬件调整这些值
+        // ADC → charge. Fitted 2026-11-08 to three full off-charger discharges
+        // (11-01, 11-05, 11-06; charge taken as linear in time, weighted by the
+        // backlight): the Spotpear table read 30 % with under an hour left.
+        // The board browns out around 2010; off the charger it starts near 2370.
+        average_adc_ = average_adc;
         const struct {
             uint16_t adc;
             uint8_t level;
         } levels[] = {
-            {1980, 0},
-            {2081, 20},
-            {2163, 40},
-            {2250, 60},
-            {2340, 80},
-            {2480, 100}
+            {2010, 0},
+            {2100, 10},
+            {2160, 20},
+            {2220, 40},
+            {2270, 60},
+            {2318, 80},
+            {2370, 100}
         };
+        constexpr int kLevels = sizeof(levels) / sizeof(levels[0]);
 
-        // 低于最低值时
         if (average_adc < levels[0].adc) {
             battery_level_ = 0;
-        }
-        // 高于最高值时
-        else if (average_adc >= levels[5].adc) {
+        } else if (average_adc >= levels[kLevels - 1].adc) {
             battery_level_ = 100;
         } else {
-            // 线性插值计算中间值
-            for (int i = 0; i < 5; i++) {
+            for (int i = 0; i < kLevels - 1; i++) {
                 if (average_adc >= levels[i].adc && average_adc < levels[i+1].adc) {
                     float ratio = static_cast<float>(average_adc - levels[i].adc) / (levels[i+1].adc - levels[i].adc);
                     battery_level_ = levels[i].level + ratio * (levels[i+1].level - levels[i].level);
@@ -173,6 +176,8 @@ public:
         // 没有区分充电和放电，所以直接返回相反状态
         return !is_charging_;
     }
+
+    uint32_t GetAdcAverage() { return average_adc_; }  // raw, for the telemetry
 
     uint8_t GetBatteryLevel() {
         return battery_level_;

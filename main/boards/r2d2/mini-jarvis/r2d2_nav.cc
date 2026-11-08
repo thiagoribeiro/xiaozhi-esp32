@@ -613,11 +613,10 @@ void NavView::RunLocal(Item& item) {
         codec->SetInputGain(gain);
         Settings("r2d2", true).SetInt("mic_gain", gain);
     } else if (item.local == "bright+" || item.local == "bright-") {
-        auto backlight = board.GetBacklight();
-        if (backlight) {
-            int b = std::clamp(backlight->brightness() + (item.local == "bright+" ? 15 : -15), 10, 100);
-            backlight->SetBrightness(b, true);
-        }
+        // The saved day level; the display applies it (sun curve, battery) on its next tick.
+        Settings settings("display", true);
+        int b = std::clamp((int)settings.GetInt("brightness", 75) + (item.local == "bright+" ? 15 : -15), 10, 100);
+        settings.SetInt("brightness", b);
     }
     Render();
 }
@@ -738,8 +737,8 @@ void NavView::RenderList() {
             value = std::to_string(board.GetAudioCodec()->output_volume());
         } else if (item.local == "mic+" || item.local == "mic-") {
             value = std::to_string((int)std::lround(board.GetAudioCodec()->input_gain())) + " dB";
-        } else if ((item.local == "bright+" || item.local == "bright-") && board.GetBacklight()) {
-            value = std::to_string(board.GetBacklight()->brightness());
+        } else if (item.local == "bright+" || item.local == "bright-") {
+            value = std::to_string(Settings("display").GetInt("brightness", 75));
         } else if (!item.open.empty() || !item.area.empty()) {
             value = ">";
         }

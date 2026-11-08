@@ -7,6 +7,7 @@
 #include <driver/gpio.h>
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
+#include <atomic>
 #include <mutex>
 
 
@@ -20,6 +21,7 @@ private:
     esp_codec_dev_handle_t dev_ = nullptr;
     gpio_num_t pa_pin_ = GPIO_NUM_NC;
     bool pa_inverted_ = false;
+    std::atomic<bool> pa_suspended_{false};
     std::mutex data_if_mutex_;
 
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
@@ -38,6 +40,7 @@ public:
     virtual void SetOutputVolume(int volume) override;
     virtual void SetInputGain(float gain) override;
     virtual void EnableInput(bool enable) override;
+    virtual void SuspendAmplifier() override;
     virtual void EnableOutput(bool enable) override;
 };
 

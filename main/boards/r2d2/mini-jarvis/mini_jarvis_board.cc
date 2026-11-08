@@ -25,6 +25,7 @@
 #include <esp_lcd_panel_vendor.h>
 #include <driver/spi_common.h>
 #include "power_save_timer.h"
+#include "r2d2_power.h"
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 #include "freertos/FreeRTOS.h"
@@ -134,13 +135,15 @@ private:
         // (off after 290 s) cut the power latch and deep-slept with no wake-up
         // source, so a satellite left off the charger went dark for good.
         power_save_timer_ = new PowerSaveTimer(-1, 60, -1);
+        // The display owns the backlight (r2d2_power.h): sleeping is just a flag
+        // it folds into the brightness it computes every second.
         power_save_timer_->OnEnterSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(true);
-            GetBacklight()->SetBrightness(1);
+            r2d2::power::asleep = true;
         });
         power_save_timer_->OnExitSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(false);
-            GetBacklight()->RestoreBrightness();
+            r2d2::power::asleep = false;
         });
         power_save_timer_->OnShutdownRequest([this]() {
             ESP_LOGI(TAG, "Shutting down");
@@ -162,12 +165,12 @@ private:
     void InitializePowerManager() {
         power_manager_ = new PowerManager(BATTERY_CHARGING_PIN, ADC_CHANNEL_0);
         power_manager_->OnChargingStatusChanged([this](bool is_charging) {
-            if (is_charging) {
-                power_save_timer_->SetEnabled(false);
-            } else {
-                power_save_timer_->SetEnabled(true);
-            }
+            power_save_timer_->SetEnabled(!is_charging);
+            r2d2::power::SetOnBattery(!is_charging);
         });
+        // Booting on battery: the pin reads like the initial "not charging", so
+        // no change fires (the timer is already on from InitializePowerSaveTimer).
+        r2d2::power::SetOnBattery(gpio_get_level(BATTERY_CHARGING_PIN) != 1);
     }
 
     void InitializeCodecI2c() {
@@ -503,6 +506,7 @@ public:
             last_discharging = discharging;
         }
         level = power_manager_->GetBatteryLevel();
+        r2d2::power::battery_adc = (int)power_manager_->GetAdcAverage();
         return true;
     }
 
@@ -510,6 +514,8 @@ public:
         if (level != PowerSaveLevel::LOW_POWER) {
             power_save_timer_->WakeUp();
         }
+        // The app says PERFORMANCE for a conversation or media, LOW_POWER after.
+        r2d2::power::SetActive(level != PowerSaveLevel::LOW_POWER);
         WifiBoard::SetPowerSaveLevel(level);
     }
 };

@@ -845,6 +845,8 @@ void AudioService::CheckAndUpdateAudioPowerState() {
         // Keep TX clock when duplex RX is active; otherwise RX may stall on some boards.
         if (!(codec_->duplex() && codec_->input_enabled())) {
             codec_->EnableOutput(false);
+        } else {
+            codec_->SuspendAmplifier();  // the wake word keeps RX on: drop just the PA
         }
     }
     if (!codec_->input_enabled() && !codec_->output_enabled()) {
