@@ -33,6 +33,10 @@ public:
     virtual void SetInputGain(float gain);
     virtual void EnableInput(bool enable);
     virtual void EnableOutput(bool enable);
+    // Duplex codecs keep the output open while the mic runs (the TX clock feeds RX):
+    // after the output timeout, only the speaker amplifier is switched off. The
+    // next write switches it back on. Default: nothing to switch.
+    virtual void SuspendAmplifier() {}
 
     virtual void OutputData(std::vector<int16_t>& data);
     virtual bool InputData(std::vector<int16_t>& data);

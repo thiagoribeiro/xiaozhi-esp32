@@ -5,6 +5,7 @@
 #include "board.h"
 #include "device_state.h"
 #include "r2d2_core_client.h"
+#include "r2d2_power.h"
 #include "settings.h"
 
 #include <cJSON.h>
@@ -181,7 +182,7 @@ void R2d2Display::OnTick(lv_timer_t* timer) {
     int64_t now = esp_timer_get_time();
     if (self->nav_) self->nav_->Tick(now);
     self->Refresh();
-    self->UpdateNight(now);
+    self->UpdateBrightness(now);
     Application::GetInstance().Schedule([self]() { self->MediaTryStart(); });
 }
 
@@ -245,41 +246,46 @@ void R2d2Display::SetNightCurve(float fraction, int floor) {
     next_night_check_us_ = 0;
 }
 
-void R2d2Display::UpdateNight(int64_t now_us) {
+// The one place that sets the backlight (r2d2_power.h). The saved level
+// (display/brightness, the settings screen's) is the day brightness; the
+// result is never saved.
+int R2d2Display::TargetBrightness(int64_t now_us, bool idle) const {
+    int day = std::clamp((int)Settings("display").GetInt("brightness", 75), 1, 100);
+    int level = day;
+    if (night_fraction_ >= 0) {  // sun mode: follow the Core's dusk/dawn curve
+        level = (int)std::lround(day - (day - std::min(night_floor_, day)) * night_fraction_);
+    } else {                     // window mode
+        time_t now = time(nullptr);
+        struct tm tm_now;
+        localtime_r(&now, &tm_now);
+        int h = tm_now.tm_hour;
+        bool night = tm_now.tm_year >= 2025 - 1900 &&
+                     (night_start_ > night_end_ ? (h >= night_start_ || h < night_end_)
+                                                : (h >= night_start_ && h < night_end_));
+        if (night) level = std::min(night_level_, day);
+    }
+    bool awake = !idle || now_us - last_activity_us_ <= kNightAfterActivityUs;
+    if (awake) level = std::max(level, std::min(day, power::kAwakeMinBrightness));
+    if (power::OnBattery()) {
+        level = std::max(1, (int)std::lround(level * power::kBatteryBrightnessFactor));
+        if (power::asleep && !awake) level = power::kAsleepBrightness;
+    }
+    return level;
+}
+
+void R2d2Display::UpdateBrightness(int64_t now_us) {
     if (now_us < next_night_check_us_) return;
     next_night_check_us_ = now_us + kNightCheckUs;
     auto backlight = Board::GetInstance().GetBacklight();
     if (!backlight) return;
     bool idle = UiIdle(Application::GetInstance().GetDeviceState());
     if (!idle) last_activity_us_ = now_us;  // a conversation counts as activity until it ends
-    if (night_fraction_ >= 0) {  // sun mode: follow the Core's dusk/dawn curve
-        int day = Settings("display").GetInt("brightness", 75);
-        int target = (int)std::lround(day - (day - std::min(night_floor_, day)) * night_fraction_);
-        bool dim = target < day && idle && now_us - last_activity_us_ > kNightAfterActivityUs;
-        if (dim && backlight->brightness() != target) {
-            backlight->SetBrightness(target);  // not permanent: the saved level stays the day one
-            night_dimmed_ = true;
-        } else if (!dim && night_dimmed_) {
-            backlight->RestoreBrightness();
-            night_dimmed_ = false;
-        }
-        return;
-    }
-
-    time_t now = time(nullptr);
-    struct tm tm_now;
-    localtime_r(&now, &tm_now);
-    int h = tm_now.tm_hour;
-    bool night = tm_now.tm_year >= 2025 - 1900 &&
-                 (night_start_ > night_end_ ? (h >= night_start_ || h < night_end_)
-                                            : (h >= night_start_ && h < night_end_));
-    bool dim = night && idle && now_us - last_activity_us_ > kNightAfterActivityUs;
-    if (dim && !night_dimmed_) {
-        backlight->SetBrightness(night_level_);  // not permanent: the saved level stays the day one
-        night_dimmed_ = true;
-    } else if (!dim && night_dimmed_) {
-        backlight->RestoreBrightness();
-        night_dimmed_ = false;
+    int target = TargetBrightness(now_us, idle);
+    // A fade takes < 0.5 s (5 ms a step), so off-target here means someone else
+    // (the MCP brightness tool, a stray RestoreBrightness) moved it: take it back.
+    if (target != applied_brightness_ || backlight->brightness() != target) {
+        backlight->SetBrightness(target);  // not permanent: the saved level stays the day one
+        applied_brightness_ = target;
     }
 }
 

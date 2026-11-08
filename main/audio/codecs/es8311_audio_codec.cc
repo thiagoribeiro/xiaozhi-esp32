@@ -110,6 +110,17 @@ void Es8311AudioCodec::UpdateDeviceState() {
         int level = output_enabled_ ? 1 : 0;
         gpio_set_level(pa_pin_, pa_inverted_ ? !level : level);
     }
+    pa_suspended_ = false;
+}
+
+void Es8311AudioCodec::SuspendAmplifier() {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (pa_pin_ == GPIO_NUM_NC || !output_enabled_ || pa_suspended_) {
+        return;
+    }
+    gpio_set_level(pa_pin_, pa_inverted_ ? 1 : 0);
+    pa_suspended_ = true;
+    ESP_LOGI(TAG, "Speaker amplifier suspended (output idle)");
 }
 
 void Es8311AudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din) {
@@ -220,6 +231,10 @@ int Es8311AudioCodec::Read(int16_t* dest, int samples) {
 
 int Es8311AudioCodec::Write(const int16_t* data, int samples) {
     if (output_enabled_) {
+        if (pa_suspended_ && pa_pin_ != GPIO_NUM_NC) {
+            gpio_set_level(pa_pin_, pa_inverted_ ? 0 : 1);
+            pa_suspended_ = false;
+        }
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(dev_, (void*)data, samples * sizeof(int16_t)));
     }
     return samples;
